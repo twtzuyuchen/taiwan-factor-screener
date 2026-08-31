@@ -269,7 +269,7 @@ function renderTable(rows){
   ];
 
   function build(){
-    const sorted = [...rows].sort((a,b) => (a[sortState.key]-b[sortState.key])*sortState.dir*-1 || 0);
+    const sorted = [...rows].sort((a,b) => (a[sortState.key]-b[sortState.key])*sortState.dir || 0);
     let html = "<table><thead><tr>";
     cols.forEach(c => html += `<th data-k="${c.k}">${c.label}${sortState.key===c.k?(sortState.dir===1?" ▲":" ▼"):""}</th>`);
     html += "</tr></thead><tbody>";
