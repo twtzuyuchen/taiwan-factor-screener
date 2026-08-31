@@ -1,0 +1,61 @@
+name: Update factor data
+
+on:
+  # 手動觸發：到 repo 的 Actions 分頁選這個 workflow，按 "Run workflow"，
+  # 可以自訂選股池大小、動能/波動回看天數、市場範圍。
+  workflow_dispatch:
+    inputs:
+      universe_size:
+        description: "選股池大小（依成交金額取流動性前 N 名）"
+        default: "200"
+      momentum_lookback:
+        description: "動能回看天數（交易日）"
+        default: "120"
+      vol_lookback:
+        description: "波動度回看天數（交易日）"
+        default: "60"
+      market:
+        description: "市場範圍"
+        type: choice
+        options: [both, twse, tpex]
+        default: "both"
+
+  # 排程：預設平日台北時間 15:00（收盤後）自動跑一次。
+  # cron 用 UTC 時間，15:00 台北 = 07:00 UTC。
+  schedule:
+    - cron: "0 7 * * 1-5"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run factor build script
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          UNIVERSE_SIZE: ${{ github.event.inputs.universe_size || '200' }}
+          MOMENTUM_LOOKBACK: ${{ github.event.inputs.momentum_lookback || '120' }}
+          VOL_LOOKBACK: ${{ github.event.inputs.vol_lookback || '60' }}
+          MARKET_SCOPE: ${{ github.event.inputs.market || 'both' }}
+        run: python scripts/build_factors.py
+
+      - name: Commit updated data file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/factors_latest.json
+          git diff --staged --quiet && echo "無資料變動，略過 commit" || git commit -m "chore: update factor data ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+          git push
