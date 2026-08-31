@@ -53,7 +53,7 @@
   #progressLabel{font-size:.82rem; color:var(--gray);}
   #log{
     background:#0f1b2b; color:#9fe3b0; font-family:var(--mono); font-size:.76rem;
-    padding:10px; border-radius:6px; height:150px; overflow-y:auto; white-space:pre-wrap;
+    padding:10px; border-radius:6px; height:170px; overflow-y:auto; white-space:pre-wrap;
   }
   table{width:100%; border-collapse:collapse; font-size:.85rem;}
   th,td{padding:8px 10px; border-bottom:1px solid var(--border); text-align:right; white-space:nowrap;}
@@ -74,14 +74,14 @@
   .factor-legend div{padding:8px 10px; background:#faf8f2; border-radius:6px; border-left:3px solid var(--gold);}
   .chip{display:inline-block; background:#eee; border-radius:12px; padding:2px 9px; font-size:.72rem; margin-left:6px;}
   a{color:var(--navy);}
-  #sampleOut{white-space:pre-wrap; background:#0f1b2b; color:#e2e8f0; font-family:var(--mono); font-size:.72rem; padding:10px; border-radius:6px; max-height:220px; overflow:auto; margin-top:10px; display:none;}
+  #sampleOut{white-space:pre-wrap; background:#0f1b2b; color:#e2e8f0; font-family:var(--mono); font-size:.72rem; padding:10px; border-radius:6px; max-height:260px; overflow:auto; margin-top:10px; display:none;}
 </style>
 </head>
 <body>
 
 <header>
   <h1>台股五因子選股器 <span style="font-weight:400; opacity:.8;">Taiwan 5-Factor Stock Screener</span></h1>
-  <p>依據價值 / 質量 / 動能 / 規模 / 低波動 五大因子，對台股上市上櫃股票進行量化評分排名。資料來源：FinMind API。</p>
+  <p>依據價值 / 質量 / 動能 / 規模 / 低波動 五大因子，對台股上市上櫃股票進行量化評分排名。全市場快照取自 TWSE / TPEx 官方 Open API（免金鑰），個股歷史數據取自 FinMind API。</p>
 </header>
 
 <main>
@@ -119,8 +119,8 @@
         </div>
       </div>
       <div>
-        <label>每次請求間隔（毫秒，避免超過 API 速率限制）</label>
-        <input type="number" id="delayMs" value="300" min="100" max="3000" step="50">
+        <label>每次請求間隔（毫秒，避免超過 FinMind 速率限制）</label>
+        <input type="number" id="delayMs" value="350" min="100" max="3000" step="50">
       </div>
       <div>
         <label>市場範圍</label>
@@ -132,12 +132,16 @@
       </div>
     </div>
     <div class="btnrow">
-      <button class="btn-outline" id="btnTest">🔍 測試 API 連線 / 檢查欄位</button>
+      <button class="btn-outline" id="btnTest">🔍 測試連線 / 檢查欄位</button>
       <button class="btn-danger" id="btnClearCache">🗑 清除本機快取</button>
     </div>
     <div id="sampleOut"></div>
     <p class="note">
-      提醒：FinMind 為第三方資料供應商，資料集欄位偶爾會調整。若計分結果全部掛零或報表異常，請先按「測試 API 連線」核對下方 Console 輸出的原始欄位名稱，再對照 <code>CONFIG</code>（原始碼開頭）調整欄位對應。
+      資料來源分工：<b>全市場快照</b>（流動性排序、本益比/股價淨值比）取自證交所 <code>openapi.twse.com.tw</code> 與櫃買中心 <code>tpex.org.tw/openapi</code>，免金鑰、無方案限制；<b>個股歷史數據</b>（股價走勢、財報、資產負債表、市值）取自 FinMind API（<code>data_id</code> 指定單一股票查詢，免費方案可用）。
+      這是修正過的架構——FinMind 免費方案<b>不允許「整個市場一次查」的請求</b>（不帶 <code>data_id</code>），先前版本卡住正是因為誤用了這種查詢方式。
+    </p>
+    <p class="note">
+      提醒：TWSE/TPEx 官方 API 欄位名稱我已依官方文件核對，但因無法在此環境即時連線測試，仍可能有出入；FinMind 資料集欄位也可能隨時間調整。若計分結果掛零或報表異常，請先按「測試連線」核對下方輸出的原始欄位，再對照原始碼開頭的 <code>CONFIG</code> 調整對應。
     </p>
   </div>
 
@@ -186,7 +190,6 @@
     <h2>③ 執行選股</h2>
     <div class="btnrow">
       <button class="btn-primary" id="btnRun">▶ 開始抓取並計算因子分數</button>
-      <button class="btn-gold" id="btnResume" style="display:none;">⏯ 從中斷處繼續</button>
       <button class="btn-outline" id="btnExport" disabled>⬇ 匯出 CSV</button>
     </div>
     <div id="progressWrap">
@@ -208,35 +211,75 @@
 
 <script>
 /* =========================================================================
-   CONFIG — 若 FinMind 資料集欄位名稱有變動，請在此處調整。
-   官方文件： https://finmindtrade.com/analysis/#/data/api
+   CONFIG
+   ---------------------------------------------------------------------
+   兩類資料來源，職責分開：
+
+   1) 全市場快照（免金鑰，官方 Open API，無方案限制）
+      - 流動性排序 + OHLC：TWSE STOCK_DAY_ALL / TPEx tpex_mainboard_daily_close_quotes
+      - 本益比/股價淨值比/殖利率：TWSE BWIBBU_d / TPEx tpex_mainboard_peratio_analysis
+      這兩組 API 都只回傳「最新一個交易日」，沒有歷史查詢參數。
+
+   2) 個股歷史數據（FinMind，需帶 data_id，免費方案可用）
+      - 股價歷史（動能/波動）：TaiwanStockPrice
+      - 市值：TaiwanStockMarketValue
+      - 財報 EPS：TaiwanStockFinancialStatements
+      - 資產負債表：TaiwanStockBalanceSheet
+
+      FinMind 免費方案不允許省略 data_id 的整個市場查詢（會回傳
+      "Your level is free" 之類的錯誤，瀏覽器端常直接顯示成 Failed to
+      fetch）。所以第 2 類全部改成迴圈逐檔帶 data_id 查詢；第 1 類（全市場
+      快照）改用官方 TWSE/TPEx API，完全不經過 FinMind。
+
+   若官方 API 欄位名稱有調整，或 FinMind 資料集欄位變動，請在此處調整。
    ========================================================================= */
 const CONFIG = {
-  API_BASE: "https://api.finmindtrade.com/api/v4/data",
-  DATASETS: {
-    STOCK_INFO: "TaiwanStockInfo",
-    PRICE: "TaiwanStockPrice",
-    PER: "TaiwanStockPER",                       // date, stock_id, PER, PBR, dividend_yield
-    MARKET_VALUE: "TaiwanStockMarketValue",       // date, stock_id, market_value  (若帳號無此資料集權限會自動改用流動性代理值)
-    FIN_STATEMENTS: "TaiwanStockFinancialStatements", // date, stock_id, type, value  (type 內含 'EPS' 等項目)
-    BALANCE_SHEET: "TaiwanStockBalanceSheet"      // date, stock_id, type, value  (type 內含 'Liabilities','TotalAssets' 等)
+  TWSE: {
+    STOCK_DAY_ALL: "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+    BWIBBU_ALL: "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_d",
+    FIELDS: {
+      CODE: ["Code", "證券代號"],
+      NAME: ["Name", "證券名稱"],
+      CLOSE: ["ClosingPrice", "收盤價"],
+      TRADE_VALUE: ["TradeValue", "成交金額"],
+      PER: ["PEratio", "PERatio", "PriceEarningRatio", "本益比"],
+      PBR: ["PBratio", "PBRatio", "PriceBookRatio", "股價淨值比"],
+      YIELD: ["DividendYield", "殖利率(%)", "殖利率"]
+    }
   },
-  FIELDS: {
-    PRICE_CLOSE: "close",
-    PRICE_DATE: "date",
-    PRICE_TRADING_MONEY: "Trading_money",
-    PER_PER: "PER",
-    PER_PBR: "PBR",
-    PER_YIELD: "dividend_yield",
-    EPS_TYPE_NAME: "EPS",
-    LIAB_TYPE_NAMES: ["Liabilities", "LiabilitiesTotal", "TotalLiabilities"],
-    ASSET_TYPE_NAMES: ["TotalAssets", "Assets", "AssetsTotal"]
+  TPEX: {
+    DAILY_CLOSE: "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
+    PERATIO: "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis",
+    FIELDS: {
+      CODE: ["SecuritiesCompanyCode", "Code", "代號"],
+      NAME: ["CompanyName", "Name", "名稱"],
+      CLOSE: ["Close", "收盤價"],
+      TRADE_VALUE: ["TradingMoney", "TransactionAmount", "成交金額"],
+      PER: ["PriceEarningRatio", "PEratio", "本益比"],
+      PBR: ["PriceBookRatio", "PBratio", "股價淨值比"],
+      YIELD: ["DividendYieldRatio", "DividendYield", "殖利率"]
+    }
+  },
+  FINMIND: {
+    API_BASE: "https://api.finmindtrade.com/api/v4/data",
+    DATASETS: {
+      STOCK_INFO: "TaiwanStockInfo",
+      PRICE: "TaiwanStockPrice",
+      MARKET_VALUE: "TaiwanStockMarketValue",
+      FIN_STATEMENTS: "TaiwanStockFinancialStatements",
+      BALANCE_SHEET: "TaiwanStockBalanceSheet"
+    },
+    FIELDS: {
+      PRICE_CLOSE: "close",
+      EPS_TYPE_NAME: "EPS",
+      LIAB_TYPE_NAMES: ["Liabilities", "LiabilitiesTotal", "TotalLiabilities"],
+      ASSET_TYPE_NAMES: ["TotalAssets", "Assets", "AssetsTotal"]
+    }
   }
 };
 
 let TOKEN = "";
 let CACHE_PREFIX = "twfactor_";
-let stopRequested = false;
 let lastResults = [];
 
 // ---------- small utils ----------
@@ -263,6 +306,17 @@ function todayStr(offsetDays=0){
   d.setDate(d.getDate() + offsetDays);
   return d.toISOString().slice(0,10);
 }
+function pick(row, candidates){
+  for(const k of candidates){
+    if(row[k] !== undefined && row[k] !== null && row[k] !== "") return row[k];
+  }
+  return null;
+}
+function toNum(v){
+  if(v === null || v === undefined) return null;
+  const n = Number(String(v).replace(/,/g,"").trim());
+  return isNaN(n) ? null : n;
+}
 
 // ---------- localStorage cache (resumable runs) ----------
 function cacheGet(key){
@@ -280,14 +334,41 @@ function clearCache(){
   log(`已清除本機快取 (${keys.length} 筆)`);
 }
 
-// ---------- FinMind fetch wrapper ----------
+// ---------- generic fetch with cache + retry ----------
+async function fetchJson(url, {useCache=true, cacheKey=null, retries=2} = {}){
+  const key = cacheKey || url;
+  if(useCache){
+    const cached = cacheGet(key);
+    if(cached) return cached;
+  }
+  let attempt = 0;
+  while(attempt <= retries){
+    attempt++;
+    try{
+      const resp = await fetch(url);
+      if(!resp.ok){
+        log(`⚠ HTTP ${resp.status}：${url.split("?")[0]}`);
+        if(resp.status === 429){ await sleep(4000); continue; }
+      }
+      const json = await resp.json();
+      if(useCache) cacheSet(key, json);
+      return json;
+    }catch(e){
+      log(`⚠ 請求失敗 第 ${attempt} 次：${url.split("?")[0]} — ${e.message}`);
+      if(attempt <= retries) await sleep(1200);
+    }
+  }
+  return null;
+}
+
+// ---------- FinMind fetch wrapper (per-stock, data_id scoped) ----------
 async function finmind(dataset, params={}, {useCache=true, cacheKey=null} = {}){
   const key = cacheKey || `${dataset}_${JSON.stringify(params)}`;
   if(useCache){
     const cached = cacheGet(key);
     if(cached) return cached;
   }
-  const url = new URL(CONFIG.API_BASE);
+  const url = new URL(CONFIG.FINMIND.API_BASE);
   url.searchParams.set("dataset", dataset);
   Object.entries(params).forEach(([k,v]) => { if(v !== undefined && v !== null && v !== "") url.searchParams.set(k, v); });
   if(TOKEN) url.searchParams.set("token", TOKEN);
@@ -317,6 +398,69 @@ async function finmind(dataset, params={}, {useCache=true, cacheKey=null} = {}){
   return [];
 }
 
+// ---------- whole-market snapshot: TWSE + TPEx official open API ----------
+async function fetchTwseSnapshot(){
+  const priceRows = await fetchJson(CONFIG.TWSE.STOCK_DAY_ALL, {cacheKey:"twse_stock_day_all"});
+  const perRows = await fetchJson(CONFIG.TWSE.BWIBBU_ALL, {cacheKey:"twse_bwibbu_all"});
+  if(!Array.isArray(priceRows)) return [];
+
+  const perMap = {};
+  (perRows || []).forEach(r => {
+    const code = pick(r, CONFIG.TWSE.FIELDS.CODE);
+    if(!code) return;
+    perMap[code] = {
+      per: toNum(pick(r, CONFIG.TWSE.FIELDS.PER)),
+      pbr: toNum(pick(r, CONFIG.TWSE.FIELDS.PBR)),
+      yield: toNum(pick(r, CONFIG.TWSE.FIELDS.YIELD))
+    };
+  });
+
+  return priceRows.map(r => {
+    const code = pick(r, CONFIG.TWSE.FIELDS.CODE);
+    const close = toNum(pick(r, CONFIG.TWSE.FIELDS.CLOSE));
+    const tradeValue = toNum(pick(r, CONFIG.TWSE.FIELDS.TRADE_VALUE));
+    const per = perMap[code] || {};
+    return {
+      stock_id: code,
+      name: pick(r, CONFIG.TWSE.FIELDS.NAME),
+      market: "TWSE",
+      close, tradeValue,
+      per: per.per ?? null, pbr: per.pbr ?? null, divYield: per.yield ?? null
+    };
+  }).filter(r => r.stock_id && r.close > 0);
+}
+
+async function fetchTpexSnapshot(){
+  const priceRows = await fetchJson(CONFIG.TPEX.DAILY_CLOSE, {cacheKey:"tpex_daily_close"});
+  const perRows = await fetchJson(CONFIG.TPEX.PERATIO, {cacheKey:"tpex_peratio"});
+  if(!Array.isArray(priceRows)) return [];
+
+  const perMap = {};
+  (perRows || []).forEach(r => {
+    const code = pick(r, CONFIG.TPEX.FIELDS.CODE);
+    if(!code) return;
+    perMap[code] = {
+      per: toNum(pick(r, CONFIG.TPEX.FIELDS.PER)),
+      pbr: toNum(pick(r, CONFIG.TPEX.FIELDS.PBR)),
+      yield: toNum(pick(r, CONFIG.TPEX.FIELDS.YIELD))
+    };
+  });
+
+  return priceRows.map(r => {
+    const code = pick(r, CONFIG.TPEX.FIELDS.CODE);
+    const close = toNum(pick(r, CONFIG.TPEX.FIELDS.CLOSE));
+    const tradeValue = toNum(pick(r, CONFIG.TPEX.FIELDS.TRADE_VALUE));
+    const per = perMap[code] || {};
+    return {
+      stock_id: code,
+      name: pick(r, CONFIG.TPEX.FIELDS.NAME),
+      market: "TPEx",
+      close, tradeValue,
+      per: per.per ?? null, pbr: per.pbr ?? null, divYield: per.yield ?? null
+    };
+  }).filter(r => r.stock_id && r.close > 0);
+}
+
 // ---------- test connection ----------
 async function testConnection(){
   TOKEN = $("token").value.trim();
@@ -325,47 +469,38 @@ async function testConnection(){
   out.textContent = "測試中...\n";
   const samples = {};
   try{
-    samples.StockInfo = await finmind(CONFIG.DATASETS.STOCK_INFO, {}, {useCache:false});
-    samples.StockInfo = samples.StockInfo.slice(0,2);
+    const twsePrice = await fetchJson(CONFIG.TWSE.STOCK_DAY_ALL, {useCache:false});
+    samples["TWSE STOCK_DAY_ALL"] = {count: Array.isArray(twsePrice)?twsePrice.length:"非陣列，請檢查", sample: Array.isArray(twsePrice)?twsePrice.slice(0,2):twsePrice};
 
-    const d = todayStr(-1);
-    samples.PER = await finmind(CONFIG.DATASETS.PER, {date:d}, {useCache:false});
-    samples.PER = samples.PER.slice(0,2);
+    const twsePer = await fetchJson(CONFIG.TWSE.BWIBBU_ALL, {useCache:false});
+    samples["TWSE BWIBBU_d"] = {count: Array.isArray(twsePer)?twsePer.length:"非陣列，請檢查", sample: Array.isArray(twsePer)?twsePer.slice(0,2):twsePer};
 
-    samples.Price = await finmind(CONFIG.DATASETS.PRICE, {date:d}, {useCache:false});
-    samples.Price = samples.Price.slice(0,2);
+    const tpexPrice = await fetchJson(CONFIG.TPEX.DAILY_CLOSE, {useCache:false});
+    samples["TPEx daily_close_quotes"] = {count: Array.isArray(tpexPrice)?tpexPrice.length:"非陣列，請檢查", sample: Array.isArray(tpexPrice)?tpexPrice.slice(0,2):tpexPrice};
 
-    samples.MarketValue = await finmind(CONFIG.DATASETS.MARKET_VALUE, {date:d}, {useCache:false});
-    samples.MarketValue = samples.MarketValue.slice(0,2);
+    const tpexPer = await fetchJson(CONFIG.TPEX.PERATIO, {useCache:false});
+    samples["TPEx peratio_analysis"] = {count: Array.isArray(tpexPer)?tpexPer.length:"非陣列，請檢查", sample: Array.isArray(tpexPer)?tpexPer.slice(0,2):tpexPer};
 
-    if(samples.StockInfo.length){
-      const sid = samples.StockInfo[0].stock_id;
-      samples.FinancialStatements = (await finmind(CONFIG.DATASETS.FIN_STATEMENTS, {data_id:sid, start_date: todayStr(-400)}, {useCache:false})).slice(0,6);
-      samples.BalanceSheet = (await finmind(CONFIG.DATASETS.BALANCE_SHEET, {data_id:sid, start_date: todayStr(-400)}, {useCache:false})).slice(0,6);
-    }
+    samples["FinMind TaiwanStockInfo"] = (await finmind(CONFIG.FINMIND.DATASETS.STOCK_INFO, {}, {useCache:false})).slice(0,2);
+
+    const sampleId = (Array.isArray(twsePrice) && twsePrice[0]) ? pick(twsePrice[0], CONFIG.TWSE.FIELDS.CODE) : "2330";
+    samples[`FinMind TaiwanStockPrice (data_id=${sampleId})`] = (await finmind(CONFIG.FINMIND.DATASETS.PRICE, {data_id:sampleId, start_date:todayStr(-30)}, {useCache:false})).slice(0,3);
+    samples[`FinMind TaiwanStockMarketValue (data_id=${sampleId})`] = (await finmind(CONFIG.FINMIND.DATASETS.MARKET_VALUE, {data_id:sampleId, start_date:todayStr(-30)}, {useCache:false})).slice(0,3);
+    samples[`FinMind TaiwanStockFinancialStatements (data_id=${sampleId})`] = (await finmind(CONFIG.FINMIND.DATASETS.FIN_STATEMENTS, {data_id:sampleId, start_date:todayStr(-400)}, {useCache:false})).slice(0,6);
+    samples[`FinMind TaiwanStockBalanceSheet (data_id=${sampleId})`] = (await finmind(CONFIG.FINMIND.DATASETS.BALANCE_SHEET, {data_id:sampleId, start_date:todayStr(-400)}, {useCache:false})).slice(0,6);
+
     out.textContent = JSON.stringify(samples, null, 2);
-    log("✅ 測試完成，請檢查上方欄位是否與 CONFIG 對應一致。");
+    log("✅ 測試完成，請檢查上方欄位是否與 CONFIG 對應一致。若某項「筆數」是 0 或「非陣列」，代表該來源可能被 CORS 擋下或欄位/網址有變動，可打開瀏覽器開發者工具的 Network 分頁看實際錯誤。");
   }catch(e){
     out.textContent = "測試失敗：" + e.message;
     log("❌ 測試連線失敗：" + e.message);
   }
 }
 
-// ---------- find latest trading date with data ----------
-async function findLatestTradingDate(){
-  for(let back = 0; back < 8; back++){
-    const d = todayStr(-back);
-    const data = await finmind(CONFIG.DATASETS.PRICE, {date:d}, {useCache:true, cacheKey:`snap_price_${d}`});
-    if(data.length > 50) return {date:d, snapshot:data};
-    log(`${d} 無足夠資料（可能非交易日），往前找...`);
-  }
-  throw new Error("找不到近期有效交易日資料，請確認 API token 額度或稍後再試。");
-}
-
 // ---------- EPS stability / TTM from financial statements ----------
 function extractEpsSeries(rows){
   return rows
-    .filter(r => (r.type || "").toUpperCase() === CONFIG.FIELDS.EPS_TYPE_NAME.toUpperCase())
+    .filter(r => (r.type || "").toUpperCase() === CONFIG.FINMIND.FIELDS.EPS_TYPE_NAME.toUpperCase())
     .map(r => ({date:r.date, value:Number(r.value)}))
     .filter(r => !isNaN(r.value))
     .sort((a,b) => a.date.localeCompare(b.date));
@@ -379,18 +514,22 @@ function extractBalanceRatio(rows){
     }
     return null;
   };
-  const liab = findVal(CONFIG.FIELDS.LIAB_TYPE_NAMES);
-  const assets = findVal(CONFIG.FIELDS.ASSET_TYPE_NAMES);
+  const liab = findVal(CONFIG.FINMIND.FIELDS.LIAB_TYPE_NAMES);
+  const assets = findVal(CONFIG.FINMIND.FIELDS.ASSET_TYPE_NAMES);
   if(liab == null || assets == null || assets === 0) return null;
   return liab / assets;
 }
+function latestMarketValue(rows){
+  if(!rows || !rows.length) return null;
+  const sorted = [...rows].sort((a,b) => (b.date||"").localeCompare(a.date||""));
+  const v = Number(sorted[0].market_value ?? sorted[0].MarketValue ?? sorted[0].value);
+  return isNaN(v) ? null : v;
+}
 
 // ---------- main pipeline ----------
-async function runScreen(resume=false){
+async function runScreen(){
   TOKEN = $("token").value.trim();
-  stopRequested = false;
   $("btnRun").disabled = true;
-  $("btnResume").style.display = "none";
   $("progressWrap").style.display = "block";
   $("log").textContent = "";
   $("resultsCard").style.display = "none";
@@ -404,86 +543,60 @@ async function runScreen(resume=false){
   const excludeThin = $("excludeThin").checked;
 
   try{
-    log("步驟 1/5：取得股票基本清單...");
-    const stockInfoRaw = await finmind(CONFIG.DATASETS.STOCK_INFO, {}, {useCache:true, cacheKey:"stock_info"});
-    const infoMap = {};
-    stockInfoRaw.forEach(r => {
-      if(!r.stock_id) return;
-      infoMap[r.stock_id] = {name:r.stock_name, type:r.type || "", industry:r.industry_category || ""};
-    });
-    log(`取得 ${stockInfoRaw.length} 筆股票基本資料。`);
-
-    log("步驟 2/5：取得最新一日全市場價格快照（用於流動性排序）...");
-    const {date: latestDate, snapshot} = await findLatestTradingDate();
-    log(`使用交易日：${latestDate}，共 ${snapshot.length} 檔股票有報價。`);
-
-    let candidates = snapshot
-      .filter(r => r.stock_id && r[CONFIG.FIELDS.PRICE_CLOSE] > 0)
-      .map(r => ({
-        stock_id: r.stock_id,
-        close: Number(r[CONFIG.FIELDS.PRICE_CLOSE]),
-        tradingMoney: Number(r[CONFIG.FIELDS.PRICE_TRADING_MONEY] || 0)
-      }));
-
-    if(marketScope !== "both"){
-      candidates = candidates.filter(c => {
-        const t = (infoMap[c.stock_id]?.type || "").toLowerCase();
-        if(marketScope === "twse") return t.includes("twse") || t.includes("上市") || t === "";
-        if(marketScope === "tpex") return t.includes("tpex") || t.includes("上櫃") || t.includes("otc");
-        return true;
-      });
+    log("步驟 1/4：取得全市場快照（TWSE + TPEx 官方 Open API，免金鑰）...");
+    let universe = [];
+    if(marketScope === "both" || marketScope === "twse"){
+      const twse = await fetchTwseSnapshot();
+      log(`TWSE 上市：取得 ${twse.length} 檔快照。`);
+      universe = universe.concat(twse);
+    }
+    if(marketScope === "both" || marketScope === "tpex"){
+      const tpex = await fetchTpexSnapshot();
+      log(`TPEx 上櫃：取得 ${tpex.length} 檔快照。`);
+      universe = universe.concat(tpex);
+    }
+    if(!universe.length){
+      throw new Error("無法取得全市場快照，請按「測試連線」檢查 TWSE/TPEx API 是否可連線（可能是 CORS 被瀏覽器擋下，或官方網址／欄位已變動）。");
     }
 
-    candidates.sort((a,b) => b.tradingMoney - a.tradingMoney);
-    candidates = candidates.slice(0, universeSize);
-    log(`依成交金額篩出流動性前 ${candidates.length} 檔股票作為選股池。`);
-
-    log("步驟 3/5：取得本益比 / 股價淨值比 (Value 因子) 與市值 (Size 因子) 快照...");
-    const perSnap = await finmind(CONFIG.DATASETS.PER, {date:latestDate}, {useCache:true, cacheKey:`snap_per_${latestDate}`});
-    const perMap = {};
-    perSnap.forEach(r => { perMap[r.stock_id] = {per:Number(r[CONFIG.FIELDS.PER_PER]), pbr:Number(r[CONFIG.FIELDS.PER_PBR]), yield:Number(r[CONFIG.FIELDS.PER_YIELD])}; });
-
-    let mvSnap = [];
-    let mvAvailable = true;
-    try{
-      mvSnap = await finmind(CONFIG.DATASETS.MARKET_VALUE, {date:latestDate}, {useCache:true, cacheKey:`snap_mv_${latestDate}`});
-      if(!mvSnap.length) mvAvailable = false;
-    }catch(e){ mvAvailable = false; }
-    const mvMap = {};
-    if(mvAvailable){
-      mvSnap.forEach(r => { mvMap[r.stock_id] = Number(r.market_value); });
-      log("成功取得市值資料集。");
-    }else{
-      log("⚠ 無法取得市值資料集（可能需要付費方案），規模因子將改用「收盤價 × 成交金額」流動性代理值。");
+    log("步驟 2/4：依成交金額篩出流動性前段股票作為選股池...");
+    universe = universe.filter(r => r.close > 0);
+    universe.sort((a,b) => (b.tradeValue||0) - (a.tradeValue||0));
+    let candidates = universe.slice(0, universeSize);
+    if(excludeLoss){
+      candidates = candidates.filter(c => c.per == null || c.per > 0);
     }
+    log(`篩出 ${candidates.length} 檔股票（依成交金額排序，取前 ${universeSize} 名）。`);
 
-    log(`步驟 4/5：逐檔取得歷史股價與財報以計算動能 / 波動 / 質量因子（共 ${candidates.length} 檔，請耐心等候）...`);
-    $("progressWrap").style.display = "block";
+    log(`步驟 3/4：逐檔向 FinMind 取得歷史股價 / 市值 / 財報，計算動能、波動、質量因子（共 ${candidates.length} 檔，請耐心等候）...`);
 
     const priceStart = todayStr(-Math.ceil(Math.max(momLookback, volLookback) * 1.6) - 10);
     const finStart = todayStr(-760);
+    const mvStart = todayStr(-30);
+    const latestDate = todayStr();
 
     const rows = [];
     for(let i=0;i<candidates.length;i++){
-      if(stopRequested){ log("使用者已中止。"); break; }
       const c = candidates[i];
       const pct = Math.round(((i+1)/candidates.length)*100);
       $("progressFill").style.width = pct + "%";
-      $("progressLabel").textContent = `處理中 ${i+1}/${candidates.length}（${c.stock_id}）— ${pct}%`;
+      $("progressLabel").textContent = `處理中 ${i+1}/${candidates.length}（${c.stock_id} ${c.name||""}）— ${pct}%`;
 
       try{
-        const priceHist = await finmind(CONFIG.DATASETS.PRICE, {data_id:c.stock_id, start_date:priceStart, end_date:latestDate}, {useCache:true, cacheKey:`price_${c.stock_id}_${priceStart}_${latestDate}`});
+        const priceHist = await finmind(CONFIG.FINMIND.DATASETS.PRICE, {data_id:c.stock_id, start_date:priceStart, end_date:latestDate}, {useCache:true, cacheKey:`price_${c.stock_id}_${priceStart}_${latestDate}`});
         await sleep(delayMs);
-        const finHist = await finmind(CONFIG.DATASETS.FIN_STATEMENTS, {data_id:c.stock_id, start_date:finStart}, {useCache:true, cacheKey:`fin_${c.stock_id}_${finStart}`});
+        const mvHist = await finmind(CONFIG.FINMIND.DATASETS.MARKET_VALUE, {data_id:c.stock_id, start_date:mvStart}, {useCache:true, cacheKey:`mv_${c.stock_id}_${mvStart}`});
         await sleep(delayMs);
-        const balHist = await finmind(CONFIG.DATASETS.BALANCE_SHEET, {data_id:c.stock_id, start_date:finStart}, {useCache:true, cacheKey:`bal_${c.stock_id}_${finStart}`});
+        const finHist = await finmind(CONFIG.FINMIND.DATASETS.FIN_STATEMENTS, {data_id:c.stock_id, start_date:finStart}, {useCache:true, cacheKey:`fin_${c.stock_id}_${finStart}`});
+        await sleep(delayMs);
+        const balHist = await finmind(CONFIG.FINMIND.DATASETS.BALANCE_SHEET, {data_id:c.stock_id, start_date:finStart}, {useCache:true, cacheKey:`bal_${c.stock_id}_${finStart}`});
         await sleep(delayMs);
 
-        const closes = priceHist.map(r => Number(r[CONFIG.FIELDS.PRICE_CLOSE])).filter(v => v > 0);
+        const closes = priceHist.map(r => Number(r[CONFIG.FINMIND.FIELDS.PRICE_CLOSE])).filter(v => v > 0);
         if(closes.length < Math.min(20, momLookback)){
           if(excludeThin) continue;
         }
-        const lastClose = closes[closes.length-1];
+        const lastClose = closes.length ? closes[closes.length-1] : c.close;
         const momIdx = Math.max(0, closes.length - 1 - momLookback);
         const momentum = closes.length > momIdx ? (lastClose / closes[momIdx] - 1) : null;
 
@@ -499,21 +612,23 @@ async function runScreen(resume=false){
 
         const debtRatio = extractBalanceRatio(balHist);
 
-        const per = perMap[c.stock_id]?.per ?? null;
-        const pbr = perMap[c.stock_id]?.pbr ?? null;
-        const divYield = perMap[c.stock_id]?.yield ?? null;
+        const per = c.per;
+        const pbr = c.pbr;
+        const divYield = c.divYield;
 
         const bvps = (pbr && pbr > 0) ? (lastClose / pbr) : null;
-        const roe = (bvps && epsTTM != null) ? (epsTTM / bvps) : null;
+        const roe = (bvps && epsSeries.length) ? (epsTTM / bvps) : null;
 
-        const marketValue = mvAvailable ? (mvMap[c.stock_id] ?? null) : (c.close * c.tradingMoney);
-
-        if(excludeLoss && per != null && per <= 0) continue;
+        let marketValue = latestMarketValue(mvHist);
+        let mvAvailable = marketValue != null;
+        if(!mvAvailable){
+          marketValue = lastClose * (c.tradeValue || 0); // liquidity-based proxy, clearly marked with ≈ in the table
+        }
 
         rows.push({
           stock_id: c.stock_id,
-          name: infoMap[c.stock_id]?.name || "",
-          market: (infoMap[c.stock_id]?.type || "").toLowerCase().includes("otc") || (infoMap[c.stock_id]?.type || "").includes("上櫃") ? "TPEx" : "TWSE",
+          name: c.name || "",
+          market: c.market,
           close: lastClose,
           per, pbr, divYield,
           roe, debtRatio, epsCV,
@@ -525,17 +640,16 @@ async function runScreen(resume=false){
       }
     }
 
-    log(`步驟 5/5：計算 Z-Score 綜合評分（共 ${rows.length} 檔有效資料）...`);
+    log(`步驟 4/4：計算 Z-Score 綜合評分（共 ${rows.length} 檔取得資料）...`);
     const clean = rows.filter(r => r.per != null && r.pbr != null && r.roe != null && r.debtRatio != null && r.momentum != null && r.volatility != null && r.marketValue != null);
     const finalRows = excludeThin ? clean : rows;
 
     if(finalRows.length < 5){
-      log("❌ 有效資料筆數過少，無法計算有意義的排名。請放寬篩選條件或加大選股池。");
+      log("❌ 有效資料筆數過少，無法計算有意義的排名。請放寬篩選條件、加大選股池，或按「測試連線」確認 FinMind 個股資料抓取正常。");
     } else {
       computeAndRender(finalRows);
+      log(`完成，共 ${finalRows.length} 檔納入排名。`);
     }
-
-    log("完成。");
   }catch(e){
     log("❌ 發生錯誤：" + e.message);
     console.error(e);
@@ -549,7 +663,8 @@ function computeAndRender(rows){
   const pbrZ = zscore(rows.map(r => r.pbr));
   const roeZ = zscore(rows.map(r => r.roe));
   const debtZ = zscore(rows.map(r => r.debtRatio));
-  const cvZ = zscore(rows.map(r => (r.epsCV == null ? mean(rows.map(x=>x.epsCV||0)) : r.epsCV)));
+  const cvFallback = mean(rows.filter(x=>x.epsCV!=null).map(x=>x.epsCV)) || 0;
+  const cvZ = zscore(rows.map(r => (r.epsCV == null ? cvFallback : r.epsCV)));
   const momZ = zscore(rows.map(r => r.momentum));
   const volZ = zscore(rows.map(r => r.volatility));
   const mvZ = zscore(rows.map(r => r.marketValue));
@@ -677,7 +792,7 @@ document.querySelectorAll('input[type=range]').forEach(el => {
 });
 $("btnTest").addEventListener("click", testConnection);
 $("btnClearCache").addEventListener("click", clearCache);
-$("btnRun").addEventListener("click", () => runScreen(false));
+$("btnRun").addEventListener("click", () => runScreen());
 $("btnExport").addEventListener("click", exportCSV);
 </script>
 </body>
