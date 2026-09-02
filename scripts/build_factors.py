@@ -19,8 +19,11 @@
 
 用法：
   FINMIND_TOKEN=xxx python scripts/build_factors.py \
-      --universe-size 200 --momentum-lookback 120 --vol-lookback 60 \
+      --universe-size 200 --momentum-lookback-quarters 2 --vol-lookback-quarters 1 \
       --market both --output data/factors_latest.json
+
+回看周期單位是「季」，內部會依 TRADING_DAYS_PER_QUARTER 換算成交易日：
+  1 季 ≈ 63 個交易日（252 個交易日/年 ÷ 4）。
 """
 
 import argparse
@@ -38,6 +41,7 @@ TWSE_BWIBBU_D = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_d"
 TPEX_DAILY_CLOSE = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
 TPEX_PERATIO = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis"
 FINMIND_API = "https://api.finmindtrade.com/api/v4/data"
+TRADING_DAYS_PER_QUARTER = 63  # 252 個交易日/年 ÷ 4，用來把「季」換算成交易日
 
 # 候選欄位名稱（依官方文件推斷；欄位名稱如有變動，改這裡即可，
 # 不用大改程式邏輯）
@@ -254,6 +258,12 @@ def build(args):
     session = requests.Session()
     session.headers.update({"User-Agent": "taiwan-factor-screener/1.0"})
 
+    # 回看周期以「季」設定，換算成交易日供後續計算使用
+    momentum_lookback_days = max(1, round(args.momentum_lookback_quarters * TRADING_DAYS_PER_QUARTER))
+    vol_lookback_days = max(1, round(args.vol_lookback_quarters * TRADING_DAYS_PER_QUARTER))
+    log(f"回看周期：動能 {args.momentum_lookback_quarters} 季（≈{momentum_lookback_days} 個交易日）、"
+        f"波動度 {args.vol_lookback_quarters} 季（≈{vol_lookback_days} 個交易日）")
+
     log("步驟 1/4：取得全市場快照（TWSE + TPEx 官方 Open API）...")
     universe = []
     if args.market in ("both", "twse"):
@@ -281,7 +291,7 @@ def build(args):
     fm = FinMind(args.token, session, delay_sec=args.delay)
 
     today = datetime.now(timezone.utc).date()
-    price_start = (today - timedelta(days=int(max(args.momentum_lookback, args.vol_lookback) * 1.6) + 10)).isoformat()
+    price_start = (today - timedelta(days=int(max(momentum_lookback_days, vol_lookback_days) * 1.6) + 10)).isoformat()
     fin_start = (today - timedelta(days=760)).isoformat()
     mv_start = (today - timedelta(days=30)).isoformat()
     end_date = today.isoformat()
@@ -298,14 +308,14 @@ def build(args):
 
         closes = [float(r["close"]) for r in price_hist if to_num(r.get("close"))]
         closes = [v for v in closes if v > 0]
-        if len(closes) < min(20, args.momentum_lookback) and args.exclude_thin:
+        if len(closes) < min(20, momentum_lookback_days) and args.exclude_thin:
             continue
 
         last_close = closes[-1] if closes else c["close"]
-        mom_idx = max(0, len(closes) - 1 - args.momentum_lookback)
+        mom_idx = max(0, len(closes) - 1 - momentum_lookback_days)
         momentum = (last_close / closes[mom_idx] - 1) if closes and len(closes) > mom_idx else None
 
-        vol_slice = closes[-args.vol_lookback:] if closes else []
+        vol_slice = closes[-vol_lookback_days:] if closes else []
         daily_returns = [math.log(vol_slice[k] / vol_slice[k - 1]) for k in range(1, len(vol_slice)) if vol_slice[k - 1] > 0]
         volatility = stdev(daily_returns) * math.sqrt(252) if len(daily_returns) > 5 else None
 
@@ -344,8 +354,10 @@ def build(args):
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "params": {
             "universe_size_requested": args.universe_size,
-            "momentum_lookback": args.momentum_lookback,
-            "vol_lookback": args.vol_lookback,
+            "momentum_lookback_quarters": args.momentum_lookback_quarters,
+            "vol_lookback_quarters": args.vol_lookback_quarters,
+            "momentum_lookback_days": momentum_lookback_days,
+            "vol_lookback_days": vol_lookback_days,
             "market": args.market,
             "exclude_loss": args.exclude_loss,
         },
@@ -363,8 +375,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="台股五因子選股器 — 資料建置腳本")
     p.add_argument("--token", default=os.environ.get("FINMIND_TOKEN", ""), help="FinMind API token（預設讀 FINMIND_TOKEN 環境變數）")
     p.add_argument("--universe-size", type=int, default=int(os.environ.get("UNIVERSE_SIZE", 200)))
-    p.add_argument("--momentum-lookback", type=int, default=int(os.environ.get("MOMENTUM_LOOKBACK", 120)))
-    p.add_argument("--vol-lookback", type=int, default=int(os.environ.get("VOL_LOOKBACK", 60)))
+    p.add_argument("--momentum-lookback-quarters", type=float, default=float(os.environ.get("MOMENTUM_LOOKBACK_QUARTERS", 2)), help="動能回看季數（1 季 ≈ 63 個交易日）")
+    p.add_argument("--vol-lookback-quarters", type=float, default=float(os.environ.get("VOL_LOOKBACK_QUARTERS", 1)), help="波動度回看季數（1 季 ≈ 63 個交易日）")
     p.add_argument("--market", choices=["both", "twse", "tpex"], default=os.environ.get("MARKET_SCOPE", "both"))
     p.add_argument("--delay", type=float, default=float(os.environ.get("REQUEST_DELAY", 0.35)), help="FinMind 每次請求間隔秒數")
     p.add_argument("--exclude-loss", action="store_true", default=os.environ.get("EXCLUDE_LOSS", "true").lower() == "true")
