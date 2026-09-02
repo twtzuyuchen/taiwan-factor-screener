@@ -2,18 +2,18 @@ name: Update factor data
 
 on:
   # 手動觸發：到 repo 的 Actions 分頁選這個 workflow，按 "Run workflow"，
-  # 可以自訂選股池大小、動能/波動回看天數、市場範圍。
+  # 可以自訂選股池大小、動能/波動回看季數、市場範圍。
   workflow_dispatch:
     inputs:
       universe_size:
         description: "選股池大小（依成交金額取流動性前 N 名）"
         default: "200"
-      momentum_lookback:
-        description: "動能回看天數（交易日）"
-        default: "120"
-      vol_lookback:
-        description: "波動度回看天數（交易日）"
-        default: "60"
+      momentum_lookback_quarters:
+        description: "動能回看季數（1 季 ≈ 63 個交易日，可填小數，例如 0.5）"
+        default: "2"
+      vol_lookback_quarters:
+        description: "波動度回看季數（1 季 ≈ 63 個交易日，可填小數）"
+        default: "1"
       market:
         description: "市場範圍"
         type: choice
@@ -47,8 +47,8 @@ jobs:
         env:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
           UNIVERSE_SIZE: ${{ github.event.inputs.universe_size || '200' }}
-          MOMENTUM_LOOKBACK: ${{ github.event.inputs.momentum_lookback || '120' }}
-          VOL_LOOKBACK: ${{ github.event.inputs.vol_lookback || '60' }}
+          MOMENTUM_LOOKBACK_QUARTERS: ${{ github.event.inputs.momentum_lookback_quarters || '2' }}
+          VOL_LOOKBACK_QUARTERS: ${{ github.event.inputs.vol_lookback_quarters || '1' }}
           MARKET_SCOPE: ${{ github.event.inputs.market || 'both' }}
         run: python scripts/build_factors.py
 
