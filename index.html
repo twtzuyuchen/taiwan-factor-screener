@@ -175,7 +175,7 @@ async function loadData(){
     const genDate = new Date(json.generated_at);
     $("statusLeft").innerHTML = `<b>資料筆數：</b>${json.row_count} 檔　<b>選股池目標：</b>${json.params?.universe_size_requested ?? "—"} 檔　<b>市場：</b>${json.params?.market ?? "—"}`;
     $("statusRight").textContent = `更新時間：${genDate.toLocaleString("zh-TW")}`;
-    $("genInfo").textContent = `動能回看 ${json.params?.momentum_lookback ?? "—"} 個交易日、波動度回看 ${json.params?.vol_lookback ?? "—"} 個交易日。${json.note || ""}`;
+    $("genInfo").textContent = `動能回看 ${json.params?.momentum_lookback_quarters ?? "—"} 季（≈${json.params?.momentum_lookback_days ?? "—"} 個交易日）、波動度回看 ${json.params?.vol_lookback_quarters ?? "—"} 季（≈${json.params?.vol_lookback_days ?? "—"} 個交易日）。${json.note || ""}`;
     recompute();
   }catch(e){
     $("statusLeft").textContent = "資料載入失敗";

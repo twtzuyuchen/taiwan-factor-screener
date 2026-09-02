@@ -45,8 +45,8 @@ Actions 預設是開的，不需要額外設定。`.github/workflows/update-fact
 - **自動排程**：平日台北時間 15:00（收盤後）自動執行一次，抓最新快照、算好分數、把 `data/factors_latest.json` commit 回 repo。
 - **手動觸發**：到 repo 的 **Actions** 分頁 → 左側選「Update factor data」→ 右上角「Run workflow」，可以自訂：
   - 選股池大小（預設 200）
-  - 動能回看天數（預設 120 個交易日）
-  - 波動度回看天數（預設 60 個交易日）
+  - 動能回看季數（預設 2 季，約 126 個交易日；可填小數，例如 0.5）
+  - 波動度回看季數（預設 1 季，約 63 個交易日；可填小數）
   - 市場範圍（上市+上櫃 / 僅上市 / 僅上櫃）
 
 第一次設定完，建議先手動觸發跑一次，確認能成功產生資料，不用等到排程時間。
@@ -77,7 +77,7 @@ Repo 頁面 → **Settings → Pages** → Source 選「Deploy from a branch」�
 |---|---|---|---|
 | 價值 Value | TWSE `BWIBBU_d` / TPEx `tpex_mainboard_peratio_analysis`（官方全市場快照，PER、PBR） | 對 PER、PBR 做 Z-Score 後取負號平均 | 越低越好 |
 | 質量 Quality | FinMind EPS（`TaiwanStockFinancialStatements`）＋ 資產負債表（`TaiwanStockBalanceSheet`）＋ PBR 反推每股淨值 | ROE（近四季 EPS 加總／每股淨值）越高越好；負債比（負債／資產）越低越好；EPS 波動係數（近8季標準差／平均）越低越好 | 綜合 |
-| 動能 Momentum | FinMind 歷史股價（`TaiwanStockPrice`） | 過去 N 個交易日累積報酬率（N 可在觸發 workflow 時調整，預設120） | 越高越好 |
+| 動能 Momentum | FinMind 歷史股價（`TaiwanStockPrice`） | 過去 N 季累積報酬率（N 可在觸發 workflow 時調整，預設2季≈126個交易日） | 越高越好 |
 | 規模 Size | FinMind `TaiwanStockMarketValue`（查不到則自動改用「收盤價 × 成交金額」流動性代理值，表格中標示 ≈） | 市值 Z-Score 取負號 | 越小越好 |
 | 低波動 Low Volatility | FinMind 歷史股價日報酬 | 年化標準差（√252 年化） | 越低越好 |
 
